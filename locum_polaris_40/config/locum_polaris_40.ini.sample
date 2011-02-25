@@ -1,0 +1,59 @@
+; These are custom settings that are ILS-specific, you can add and change
+; any of these configuration names if you are developing a connector for your
+; ILS.  Locum does not depend on any of these, only the connector specific to
+; your environment needs them.
+
+[connector_info]
+description                 = "Locum connector for Polaris 4.0"
+
+; Locum uses this section to determine which server and which port to use
+; server_select can either be "live" or "staging", depending on what set of
+; screens and wwwoptions you're using with locum.
+[ils_config]
+ils_server                  = "your.ils.server"
+
+[polaris_sql]
+username					= "sopac"
+password					= "yourdbpass"
+database					= "Polaris"
+server						= "your.ils.server"
+port						= "1433"
+
+[polaris_api]
+orgID						= "1"
+appID						= "100"
+langID						= "1033"
+PAPIAccessKeyID				= "SOPAC1"
+PAPIAccessKey				= "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+
+[polaris_mats]
+Archival/Mixed Materials				= "1"
+Blu-ray Disc							= "r"
+Book									= "1"
+Braille									= "1"
+DVD										= "d"
+eBooks									= "x"
+Electronic Resources					= "x"
+Kit										= "b"
+Large Print								= "1"
+Manuscript Material						= "1"
+Map										= "n"
+Microform								= "1"
+Musical Sound Recording					= "6"
+Nonmusical Sound Recording				= "b"
+Printed Cartographic Material			= "1"
+Printed Music							= "1"
+Projected Medium						= "d"
+Serial									= "3"
+Two Dimensional Nonprojected Graphic	= "2"
+
+; General configuration parameters used by the connector
+[polaris_custom_config]
+polaris_available_token     = "Available"
+polaris_default_age			= "adult"
+polaris_display_date_fmt	= "F j, Y"
+
+[polaris_record_ages]
+adult                       = "/^[afms]/"
+teen                        = "/^[ty]/"
+child                       = "/^[kjp]/"
