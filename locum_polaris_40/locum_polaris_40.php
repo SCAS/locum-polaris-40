@@ -176,6 +176,8 @@ class locum_polaris_40 {
     }
     $status['items'] = $items;
 
+    return $this->verify_mat_type($bnum, $items);
+
     return $status;
 
   }
@@ -746,6 +748,15 @@ class locum_polaris_40 {
     
     $output = curl_exec($ch);
     return $output;
+    
+  }
+  
+  public function verify_mat_type($bnum, $item_arr) {
+    
+    require($this->locum_config['locum_config']['dsn_file']);
+    $db =& MDB2::connect($this->dsn);
+    
+    return array($bnum, $item_arr);
     
   }
 
