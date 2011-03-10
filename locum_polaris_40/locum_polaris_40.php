@@ -176,7 +176,7 @@ class locum_polaris_40 {
     }
     $status['items'] = $items;
 
-    return $this->verify_mat_type($bnum, $items);
+    return $this->verify_item_attributes($bnum);
 
     return $status;
 
@@ -751,10 +751,30 @@ class locum_polaris_40 {
     
   }
   
-  public function verify_mat_type($bnum, $item_arr) {
+  public function verify_item_attributes($bnum, $modify = FALSE) {
     
-    require($this->locum_config['locum_config']['dsn_file']);
-    $db =& MDB2::connect($this->dsn);
+    $psql_username = $this->locum_config['polaris_sql']['username'];
+    $psql_password = $this->locum_config['polaris_sql']['password'];
+    $psql_database = $this->locum_config['polaris_sql']['database'];
+    $psql_server = $this->locum_config['polaris_sql']['server'];
+    $psql_port = $this->locum_config['polaris_sql']['port'];
+
+    $polaris_dsn = 'mssql://' . $psql_username . ':' . $psql_password . '@' . $psql_server . ':' . $psql_port . '/' . $psql_database;
+    $polaris_db =& MDB2::connect($polaris_dsn);
+    
+    $polaris_db_sql = 'SELECT [MaterialTypeID], [DisplayInPAC] FROM [Polaris].[Polaris].[ItemRecords] WHERE [AssociatedBibRecordID] = ' . $bnum;
+    
+    $polaris_db_query = $polaris_db->query($polaris_db_sql);
+    $polaris_bib_result = $polaris_db_query->fetchAll(MDB2_FETCHMODE_ASSOC);
+    
+    foreach ($polaris_bib_result as $item_result) {
+      
+    }
+    
+    if ($modify) {
+      require($this->locum_config['locum_config']['dsn_file']);
+      $scas_db =& MDB2::connect($dsn);
+    }
     
     return array($bnum, $item_arr);
     
