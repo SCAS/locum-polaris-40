@@ -164,6 +164,7 @@ class locum_polaris_40 {
     // Grab the item holdings from the Polaris API
     $polaris_xml = simplexml_load_file('http://' . $pils_server . '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/bib/' . $bnum . '/holdings');
     $holdings = $this->simpleXMLToArray($polaris_xml->BibHoldingsGetRows);
+return $holdings;
     $holdings = $holdings['BibHoldingsGetRow'];
     
     $items = array();
@@ -767,16 +768,33 @@ class locum_polaris_40 {
     $polaris_db_query = $polaris_db->query($polaris_db_sql);
     $polaris_bib_result = $polaris_db_query->fetchAll(MDB2_FETCHMODE_ASSOC);
     
+    $materialtypeid = array();
+    $displayinpac = 0;
+    $suppress = 1;
     foreach ($polaris_bib_result as $item_result) {
-      
+      if ($materialtypeid[$item_result['materialtypeid']]) {
+        $materialtypeid[$item_result['materialtypeid']]++;
+      } else {
+        $materialtypeid[$item_result['materialtypeid']] = 1;
+      }
+      if ($item_result['displayinpac']) {
+        $displayinpac++;
+      }
     }
+    asort($materialtypeid);
+    $mat_types = array_values(array_flip($materialtypeid));
+    $mat_type = $mat_types[0];
+    if ($displayinpac > 0) {
+      $suppress = 0;
+    }
+    
     
     if ($modify) {
       require($this->locum_config['locum_config']['dsn_file']);
       $scas_db =& MDB2::connect($dsn);
     }
     
-    return array($bnum, $item_arr);
+    return array('mat_type' => $mat_type, 'suppress' => $suppress);
     
   }
 
