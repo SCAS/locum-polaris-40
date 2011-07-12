@@ -42,11 +42,18 @@ class locum_polaris_40 {
     $polaris_db =& MDB2::connect($polaris_dsn);
 
     $bib['bnum'] = $bnum;
+    $downloadable = FALSE;
 
     // Grab the bib record from the database
     $polaris_db_sql = 'SELECT * FROM [Polaris].[Polaris].[BibliographicRecords] WHERE [BibliographicRecordID] = ' . $bnum;
     $polaris_db_query = $polaris_db->query($polaris_db_sql);
     $polaris_bib_result = $polaris_db_query->fetchRow(MDB2_FETCHMODE_ASSOC);
+    if (!count($polaris_bib_result)) { return FALSE; }
+    
+    // Grab the item material types from the database
+    $polaris_db_sql = "SELECT [MaterialTypeID] FROM [Polaris].[Polaris].[ItemRecords] WHERE [AssociatedBibRecordID] = $bnum";
+    $polaris_db_query = $polaris_db->query($polaris_db_sql);
+    $polaris_items = $polaris_db_query->fetchCol();
 
     // Grab the bib record from the Polaris API
     $polaris_xml = $this->simpleXMLToArray(simplexml_load_file('http://' . $pils_server . '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/bib/' . $bnum));
@@ -68,8 +75,23 @@ class locum_polaris_40 {
     $bib['lang'] = trim(preg_replace('/[^a-zA-Z0-9\s]/', '', $polaris_bib_result['marclanguage']));
     $bib['lang'] = $bib['lang'] ? $bib['lang'] : 'eng'; // add defult config option. hard-coded for now.
     $bib['loc_code'] = "unused";
-    //$bib['mat_code'] = $xmat_types_arr[$polaris_xml_bib['format'][0]];
-    $bib['mat_code'] = $polaris_xml_bib['format'][0];
+    $bib['mat_code'] = 0;
+    if (count($polaris_items)) {
+      $matcount = array();
+      foreach ($polaris_items as $matcode) {
+        $matcount[$matcode]++;
+      }
+      ksort($matcount);
+      $matcodes = array_values(array_flip($matcount));
+      $bib['mat_code'] = $matcodes[0];
+    }
+    if ($polaris_xml_bib['format'][0] == $this->locum_config['polaris_custom_config']['polaris_eaudio_format_indicator']) {
+      $bib['mat_code'] = $this->locum_config['polaris_custom_config']['polaris_eaudio_materialid'];
+      $downloadable = TRUE;
+    } else if ($polaris_xml_bib['format'][0] == $this->locum_config['polaris_custom_config']['polaris_ebook_format_indicator']) {
+      $bib['mat_code'] = $this->locum_config['polaris_custom_config']['polaris_ebook_materialid'];
+      $downloadable = TRUE;
+    }
     if ($polaris_bib_result['displayinpac'] == 1) { $bib['suppress'] = 0; } else { $bib['suppress'] = 1; }
     $bib['author'] = $polaris_bib_result['browseauthor'];
     if (count($polaris_xml_bib['other author'])) {
@@ -102,7 +124,12 @@ class locum_polaris_40 {
     
     $bib['upc'] = '00000000000000000000'; // Not supported yet (and not really needed)
     $bib['cover_img'] = ''; // Not supported yet
-    $bib['download_link'] = ''; // Not supported yet
+    if ($downloadable) {
+      $weblink = explode(' ', $polaris_xml_bib['web link'][0]);
+      $bib['download_link'] = trim($weblink[0]);
+    } else {
+      $bib['download_link'] = '';
+    }
     
     $bib['lccn'] = $polaris_xml_bib['lccn'][0] ? $polaris_xml_bib['lccn'][0] : NULL;
     $bib['descr'] = $polaris_xml_bib['description'][0] ? $polaris_xml_bib['description'][0] : NULL;
@@ -149,35 +176,87 @@ class locum_polaris_40 {
  
     if (!$bnum) { return FALSE; }
 
-    // Grab the bib record from the Polaris API
-    $polaris_xml = simplexml_load_file('http://' . $pils_server . '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/bib/' . $bnum);
-    foreach ($polaris_xml->BibGetRows->BibGetRow as $xmlBibObj) {
-      $polaris_xml_bib[strtolower(substr(trim($xmlBibObj->Label), 0, -1))][trim($xmlBibObj->Occurence)] = trim($xmlBibObj->Value);
-    }
+    $polaris_dsn = 'mssql://' . $psql_username . ':' . $psql_password . '@' . $psql_server . ':' . $psql_port . '/' . $psql_database;
+    $polaris_db =& MDB2::connect($polaris_dsn);
 
-    if ($polaris_xml_bib['current holds'][1]) {
-      $status['holds'] = $polaris_xml_bib['current holds'][1];
-    } else {
-      $status['holds'] = 0;
-    }
-
-    // Grab the item holdings from the Polaris API
-    $polaris_xml = simplexml_load_file('http://' . $pils_server . '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/bib/' . $bnum . '/holdings');
-    $holdings = $this->simpleXMLToArray($polaris_xml->BibHoldingsGetRows);
-return $holdings;
-    $holdings = $holdings['BibHoldingsGetRow'];
+    $polaris_db_sql = "SELECT * FROM [Polaris].[Polaris].[ItemRecords] WHERE [AssociatedBibRecordID] = $bnum";
+    $polaris_db_query = $polaris_db->query($polaris_db_sql);
+    $polaris_items = $polaris_db_query->fetchAll(MDB2_FETCHMODE_ASSOC);
     
-    $items = array();
-    if (is_array($holdings[0])) {
-      foreach ($holdings as $holding) {
-        $items[] = $this->avail_attr($holding);
+    $status['holds'] = 0;
+    $status['on_order'] = 0;
+    $status['orders'] = array();
+    $status['items'] = array();
+    
+    if (count($polaris_items)) {
+      
+      // Availability tokens
+      $avail_ids = explode(',', $this->locum_config['polaris_custom_config']['polaris_available_statusids']);
+      $hold_ids = explode(',', $this->locum_config['polaris_custom_config']['polaris_hold_statusids']);
+      $onorder_ids = explode(',', $this->locum_config['polaris_custom_config']['polaris_onorder_statusids']);
+      
+      // Get Collections
+      $polaris_db_sql = "SELECT * FROM [Polaris].[Polaris].[Collections]";
+      $polaris_db_query = $polaris_db->query($polaris_db_sql);
+      $polaris_collections = $polaris_db_query->fetchAll(MDB2_FETCHMODE_ASSOC, TRUE);
+      
+      // Get Statuses
+      $polaris_db_sql = "SELECT * FROM [Polaris].[Polaris].[ItemStatuses]";
+      $polaris_db_query = $polaris_db->query($polaris_db_sql);
+      $polaris_statuses = $polaris_db_query->fetchAll(MDB2_FETCHMODE_ASSOC, TRUE);
+      
+      // Get Hold Counts
+      $polaris_db_sql = "SELECT COUNT([SysHoldRequestID]) FROM [Polaris].[Polaris].[SysHoldRequests] WHERE [BibliographicRecordID] = $bnum";
+      $polaris_db_query = $polaris_db->query($polaris_db_sql);
+      $status['holds'] = $polaris_db_query->fetchOne();
+      
+    } else {
+      return $status;
+    }
+    
+    foreach ($polaris_items as $holding) {
+      $itemid = $holding['itemrecordid'];
+      $avail_attr = array();
+      $avail_attr['location'] = $polaris_collections[$holding['assignedcollectionid']]['name'];
+      $avail_attr['loc_code'] = $polaris_collections[$holding['assignedcollectionid']]['abbreviation'];
+      $avail_attr['callnum'] = $holding['callnumber'];
+      $avail_attr['statusmsg'] = $polaris_statuses[$holding['itemstatusid']]['description'];
+      $avail_attr['avail'] = in_array($holding['itemstatusid'], $avail_ids) ? 1 : 0;
+      if (in_array($holding['itemstatusid'], $onorder_ids)) { $status['orders']++; }
+      if (!$avail_attr['avail']) {
+        $polaris_db_sql = "SELECT [DueDate] FROM [Polaris].[Polaris].[ItemCheckouts] WHERE [ItemRecordID] = $itemid";
+        $polaris_db_query = $polaris_db->query($polaris_db_sql);
+        $polaris_item_duedate = $polaris_db_query->fetchOne();
+        if ($polaris_item_duedate) {
+          $due_date_arr = date_parse($polaris_item_duedate);
+          $avail_attr['due'] = mktime(23, 59, 59, $due_date_arr['month'], $due_date_arr['day'], $due_date_arr['year']);
+        } else {
+          $avail_attr['due'] = NULL;
+        }
+      } else {
+        $avail_attr['due'] = NULL;
       }
-    } else if ($holdings['LocationID']) { 
-      $items[] = $this->avail_attr($holdings);
+      if ($avail_attr['due']) {
+        $avail_attr['statusmsg'] = 'Due ' . date($this->locum_config['polaris_custom_config']['polaris_display_date_fmt'], $avail_attr['due']);
+      }
+      $avail_attr['age'] = $this->locum_config['polaris_custom_config']['polaris_default_age'];
+      if (count($this->locum_config['polaris_record_ages'])) {
+        foreach ($this->locum_config['polaris_record_ages'] as $item_age => $match_crit) {
+          if (preg_match('/^\//', $match_crit)) {
+            // Use Collection abbreviation
+            if (preg_match($match_crit, $avail_attr['loc_code'])) { $avail_attr['age'] = $item_age; }
+          } else {
+            // Use Collection ID
+            if (in_array($avail_attr['loc_code'], locum::csv_parser($match_crit))) { $avail_attr['age'] = $item_age; }
+          }
+        }
+      }
+      $avail_attr['branch'] = $holding['assignedbranchid'];
+      if ($holding['displayinpac']) {
+        $items[] = $avail_attr;
+      }
     }
     $status['items'] = $items;
-
-    return $this->verify_item_attributes($bnum);
 
     return $status;
 
@@ -545,68 +624,6 @@ return $holdings;
     }
 
     return $return;
-  }
-
-  /**
-  * Internal function to determine availability attributes
-  */
-  private function avail_attr($holding) {
-    
-    $avail_tokens = explode(',', $this->locum_config['polaris_custom_config']['polaris_available_token']);
-
-    $avail_attr['location'] = $holding['CollectionName'];
-    $avail_attr['loc_code'] = $holding['CollectionID'];
-    $avail_attr['callnum'] = $holding['CallNumber'];
-    $avail_attr['statusmsg'] = $holding['CircStatus'];
-    $avail_attr['avail'] = in_array($holding['CircStatus'], $avail_tokens) ? 1 : 0;
-    if ($holding['DueDate'] && !is_array($holding['DueDate'])) {
-      $due_date_arr = date_parse($holding['DueDate']);
-      $avail_attr['due'] = mktime(23, 59, 59, $due_date_arr['month'], $due_date_arr['day'], $due_date_arr['year']);
-    } else {
-      $avail_attr['due'] = NULL;
-    }
-    if ($avail_attr['due']) {
-      $avail_attr['statusmsg'] = 'Due ' . date($this->locum_config['polaris_custom_config']['polaris_display_date_fmt'], $avail_attr['due']);
-    }
-    $avail_attr['age'] = $this->get_age($holding['CollectionID']);
-    $avail_attr['branch'] = $holding['LocationID'];
-
-    return $avail_attr;
-  }
-  
-  /**
-  * Internal function to determine age from location
-  */
-  private function get_age($loc_code) {
-    
-    $psql_username = $this->locum_config['polaris_sql']['username'];
-    $psql_password = $this->locum_config['polaris_sql']['password'];
-    $psql_database = $this->locum_config['polaris_sql']['database'];
-    $psql_server = $this->locum_config['polaris_sql']['server'];
-    $psql_port = $this->locum_config['polaris_sql']['port'];
-    
-    $age = $this->locum_config['polaris_custom_config']['polaris_default_age'];
-    
-    if (count($this->locum_config['polaris_record_ages'])) {
-      foreach ($this->locum_config['polaris_record_ages'] as $item_age => $match_crit) {
-        if (preg_match('/^\//', $match_crit)) {
-          // Use Collection abbreviation
-          
-          $polaris_dsn = 'mssql://' . $psql_username . ':' . $psql_password . '@' . $psql_server . ':' . $psql_port . '/' . $psql_database;
-          $polaris_db =& MDB2::connect($polaris_dsn);
-          // Grab the bib record from the database
-          $polaris_db_sql = 'SELECT [Abbreviation] FROM [Polaris].[Polaris].[Collections] WHERE [CollectionID] = ' . $loc_code;
-          $polaris_db_query = $polaris_db->query($polaris_db_sql);
-          $polaris_loc_abbrev = $polaris_db_query->fetchOne();
-          
-          if (preg_match($match_crit, $polaris_loc_abbrev)) { $age = $item_age; }
-        } else {
-          // Use Collection ID
-          if (in_array($loc_code, locum::csv_parser($match_crit))) { $age = $item_age; }
-        }
-      }
-    }
-    return $age;
   }
 
   
