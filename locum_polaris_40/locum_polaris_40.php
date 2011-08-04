@@ -398,10 +398,13 @@ class locum_polaris_40 {
     $holds = array();
     if (is_array($holds_arr[0])) {
       foreach ($holds_arr as $hold) {
-        $holds[] = $this->prep_holds($hold);
+        unset($prepped_hold);
+        $prepped_hold = $this->prep_holds($hold);
+        if ($prepped_hold) { $holds[] = $prepped_hold; }
       }
-    } else if ($holds_arr['BibID']) { 
-      $holds[] = $this->prep_holds($holds_arr);
+    } else if ($holds_arr['BibID']) {
+      $prepped_hold = $this->prep_holds($holds_arr);
+      if ($prepped_hold) { $holds[] = $prepped_hold; }
     }
 
     return $holds;
@@ -489,7 +492,30 @@ class locum_polaris_40 {
   * @return boolean TRUE or FALSE if it cannot cancel for some reason
   */
   public function update_holds($cardnum, $pin = NULL, $cancelholds = array(), $holdfreezes_to_update = array(), $pickup_locations = array()) {
- 
+
+    $orgID = $this->locum_config['polaris_api']['orgID'];
+    $appID = $this->locum_config['polaris_api']['appID'];
+    $langID = $this->locum_config['polaris_api']['langID'];
+
+    $ActivationDate = date('Y-m-d\TH:i:s.00');
+    $patron_info = $this->patron_info($cardnum);
+    $pickup_loc = $pickup_loc ? $pickup_loc : $patron_info['homelib'];
+    $pnum = $patron_info['pnum'];
+
+    $current_holds = $this->patron_holds($cardnum);
+
+    foreach ($cancelholds as $bnum => $cancelBool) {
+      if ($cancelBool) {
+        foreach ($current_holds as $hold) {
+          $holdID = $hold['requestid'];
+          $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
+          $renew_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
+        }
+      }
+    }
+    
+    return $renew_query_result;
+    
   }
 
   /**
@@ -651,21 +677,28 @@ class locum_polaris_40 {
   */
   private function prep_holds($holds_arr) {
     
-    $hold['bnum'] = $holds_arr['BibID'];
-    $hold['title'] = ucwords($holds_arr['Title']);
-    $hold['ill'] = 0; // Not supported yet
-    $hold['status'] = $holds_arr['QueuePosition'] . ' of ' . $holds_arr['QueueTotal'];
-    $hold['is_frozen'] = 0; // Not supported yet
-    $hold['can_freeze'] = 0; // Not supported yet
-    $pickup_loc['selectid'] = $holds_arr['HoldRequestID'];
-    $pickup_loc['selected'] = $holds_arr['PickupBranchID'];
-    $branch_list = $this->get_branch_list();
-    foreach ($branch_list as $branch) {
-      $pickup_loc['options'][$branch['OrganizationID']] = $branch['DisplayName'];
-    }
-    $hold['pickuploc'] = $pickup_loc;
+    if ($holds_arr['QueuePosition'] || $holds_arr['QueueTotal']) {
+      $hold['bnum'] = $holds_arr['BibID'];
+      $hold['requestid'] = $holds_arr['HoldRequestID'];
+      $hold['title'] = ucwords($holds_arr['Title']);
+      $hold['ill'] = 0; // Not supported yet
+      if ($holds_arr['QueuePosition']) {
+        $hold['status'] = $holds_arr['QueuePosition'] . ' of ' . $holds_arr['QueueTotal'];
+      } else {
+        $hold['status'] = 'Hold is Ready';
+      }
+      $hold['is_frozen'] = 0; // Not supported yet
+      $hold['can_freeze'] = 0; // Not supported yet
+      $pickup_loc['selectid'] = $holds_arr['PickupBranchID'];
+      $pickup_loc['selected'] = $holds_arr['PickupBranchID'];
+      $branch_list = $this->get_branch_list();
+      foreach ($branch_list as $branch) {
+        $pickup_loc['options'][$branch['OrganizationID']] = $branch['DisplayName'];
+      }
+      $hold['pickuploc'] = $pickup_loc;
     
-    return $hold;
+      return $hold;
+    }
   }
   
   /**
