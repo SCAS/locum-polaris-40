@@ -507,9 +507,10 @@ class locum_polaris_40 {
     foreach ($cancelholds as $bnum => $cancelBool) {
       if ($cancelBool) {
         foreach ($current_holds as $hold) {
-          $holdID = $hold['requestid'];
-          $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
-          $renew_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
+          print_r($hold);
+          //$holdID = $hold['requestid'];
+          //$polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
+          //$renew_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
         }
       }
     }
