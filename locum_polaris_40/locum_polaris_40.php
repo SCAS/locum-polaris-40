@@ -515,21 +515,20 @@ class locum_polaris_40 {
         }
       }
     }
-    return $freeze_query_result;
-/*
+    //return $freeze_query_result;
+
     foreach ($cancelholds as $bnum => $cancelBool) {
       if ($cancelBool) {
         foreach ($current_holds as $hold) {
           if ($hold['bnum'] == $bnum) {
             $holdID = $hold['requestid'];
             $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
-            $cxl_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
+            $renew_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
           }
         }
       }
     }
-*/
-    
+
   }
 
   /**
@@ -604,6 +603,26 @@ class locum_polaris_40 {
   */
   public function patron_fines($cardnum, $pin = NULL) {
     
+    $pils_server = $this->locum_config['ils_config']['ils_server'];
+    $orgID = $this->locum_config['polaris_api']['orgID'];
+    $appID = $this->locum_config['polaris_api']['appID'];
+    $langID = $this->locum_config['polaris_api']['langID'];
+
+    $polaris_xml = simplexml_load_file('http://' . $pils_server . '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/account/outstanding');
+    
+    $polaris_fines_arr = $this->simpleXMLToArray($polaris_xml);
+    $polaris_fines_arr = $polaris_fines_arr['PatronAccountGetRows']['PatronAccountGetRow'];
+    
+    $charges = array();
+    if (is_array($polaris_fines_arr[0])) {
+      foreach ($polaris_fines_arr as $charge) {
+        $charges[] = $this->prep_charges($charge);
+      }
+    } else if ($polaris_fines_arr['ItemID']) { 
+      $charges[] = $this->prep_charges($polaris_fines_arr);
+    }
+    return $charges;
+    
   }
 
   /**
@@ -614,11 +633,51 @@ class locum_polaris_40 {
   * @return array Payment result
   */
   public function pay_patron_fines($cardnum, $pin = NULL, $payment_details) {
- 
+    
+    $orgID = $this->locum_config['polaris_api']['orgID'];
+    $appID = $this->locum_config['polaris_api']['appID'];
+    $langID = $this->locum_config['polaris_api']['langID'];
+    
+    $payment_amount = $paument_details['total'];
+
+    // Attempt credit card payment here
+    $payment_success = TRUE; // Assuming TRUE for testing purposes;
+    $payment_reject_reason = 'Credit card payment is not yet supported';
+    $payment_error = 'Credit card payment is not yet supported';
+    
+    if ($payment_success) {
+      $pay_result['approved'] = 1;
+      
+      $patron_fines = $this->patron_fines($cardnum);
+      $allfines = array();
+      foreach ($patron_fines as $patron_fine) {
+        $allfines[$patron_fine['varname']] = $patron_fine['amount'];
+        $valid_tx_ids[] = $patron_fine['varname'];
+      }
+      
+      if (is_array($payment_details['varnames'])) {
+        foreach ($payment_details['varnames'] as $varname) {
+          if (in_array($varname, $valid_tx_ids)) {
+            $txnamt = $allfines[$varname];
+            $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/account/' . $varname . '/pay?wsid=1&userid=1';
+            $content = '<PatronAccountPayData><TxnAmount>' . $txnamt . '</TxnAmount><PaymentMethodID>12</PaymentMethodID><FreeTextNote>Transaction #' . $txnamt . ' paid through website</FreeTextNote></PatronAccountPayData>';
+            $payment_request_result[] = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri, $content)));
+          }
+        }
+      }
+      
+    } else {
+      $pay_result['approved'] = 0;
+      $pay_result['error'] = $payment_reject_reason;
+      $pay_result['reason'] = $payment_reject_reason;
+    }
+    
+    return $pay_result;
+
   }
 
 
-  ///// Extra Tools & Internal functions
+  /////////////////////////////////// ** Extra Tools & Internal functions ** //////////////////////////////////////
   
   private function simpleXMLToArray($xml, $flattenValues=true, $flattenAttributes = true, $flattenChildren=true, $valueKey='@value', $attributesKey='@attributes', $childrenKey='@children') {
 
@@ -668,7 +727,7 @@ class locum_polaris_40 {
 
   
   /**
-  * Internal function to prepare individual checkout arrays for patron_checkouts
+  * Internal function to prepare individual checkout arrays for patron_checkouts()
   */
   private function prep_checkouts($checkout_arr) {
 
@@ -685,6 +744,23 @@ class locum_polaris_40 {
     return $item;
   }
 
+  /**
+  * Internal function to prepare individual fines/charges arrays for patron_fines()
+  */
+  private function prep_charges($charge_arr) {
+    
+    $charge['varname'] = $charge_arr['TransactionID'];
+    
+    $desc = $charge_arr['FeeDescription'];
+    if ($charge_arr['Title']) { $desc .= ': ' . $charge_arr['Title']; }
+    if ($charge_arr['Author'] && $charge_arr['Title']) { $desc .= '/' . $charge_arr['Author']; }
+    if ($charge_arr['FormatDescription']) { $desc .= ' (' . $charge_arr['FormatDescription'] . ')'; }
+    $charge['desc'] = $desc;
+    
+    $charge['amount'] = (float) $charge_arr['OutstandingAmount'];
+    
+    return $charge;
+  }
   
   /**
   * Internal function to prepare individual checkout arrays for patron_checkouts
@@ -748,6 +824,11 @@ class locum_polaris_40 {
   /**
   * Internal function to determine age from location
   */
+  
+  private function curl_get($uri) {
+    
+  }
+  
   private function curl_put($uri, $content = NULL, $pin = NULL) {
     
     $pils_server = $this->locum_config['ils_config']['ils_server'];
