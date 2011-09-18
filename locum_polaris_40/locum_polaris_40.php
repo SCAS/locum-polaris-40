@@ -503,19 +503,32 @@ class locum_polaris_40 {
     $pnum = $patron_info['pnum'];
 
     $current_holds = $this->patron_holds($cardnum);
-
-    foreach ($cancelholds as $bnum => $cancelBool) {
-      if ($cancelBool) {
-        foreach ($current_holds as $hold) {
-          print_r($hold);
-          //$holdID = $hold['requestid'];
-          //$polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
-          //$renew_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
+    
+    foreach ($holdfreezes_to_update as $bnum => $freezebool) {
+      foreach ($current_holds as $hold) {
+        if ($hold['bnum'] == $bnum) {
+          $active_toggle = $freezebool ? 'inactive' : 'active';
+          $holdID = $hold['requestid'];
+          $content = '<HoldRequestActivationData> <UserID>1</UserID> <ActivationDate>' . date('Y-m-d', strtotime('+1 year')) . 'T00:00:00.00</ActivationDate> </HoldRequestActivationData>';
+          $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/' . $active_toggle;
+          $freeze_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri, $content)));
         }
       }
     }
-    
-    return $renew_query_result;
+    return $freeze_query_result;
+/*
+    foreach ($cancelholds as $bnum => $cancelBool) {
+      if ($cancelBool) {
+        foreach ($current_holds as $hold) {
+          if ($hold['bnum'] == $bnum) {
+            $holdID = $hold['requestid'];
+            $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/holdrequests/' . trim($holdID) . '/cancelled?wsid=1&userid=1';
+            $cxl_query_result = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri)));
+          }
+        }
+      }
+    }
+*/
     
   }
 
@@ -677,7 +690,9 @@ class locum_polaris_40 {
   * Internal function to prepare individual checkout arrays for patron_checkouts
   */
   private function prep_holds($holds_arr) {
-    
+
+    if ($holds_arr['StatusDescription'] == 'Cancelled') { return FALSE; }
+
     if ($holds_arr['QueuePosition'] || $holds_arr['QueueTotal']) {
       $hold['bnum'] = $holds_arr['BibID'];
       $hold['requestid'] = $holds_arr['HoldRequestID'];
@@ -688,8 +703,10 @@ class locum_polaris_40 {
       } else {
         $hold['status'] = 'Hold is Ready';
       }
-      $hold['is_frozen'] = 0; // Not supported yet
-      $hold['can_freeze'] = 0; // Not supported yet
+      $activ_date = date_parse(preg_replace('/T/i', ' ', $holds_arr['ActivationDate']));
+      $activ_timestamp = mktime(0, 0, 0, $activ_date['month'], $activ_date['day'], $activ_date['year']);
+      $hold['is_frozen'] = ($activ_timestamp > time()) ? 1 : 0;
+      $hold['can_freeze'] = 1; // Not supported yet
       $pickup_loc['selectid'] = $holds_arr['PickupBranchID'];
       $pickup_loc['selected'] = $holds_arr['PickupBranchID'];
       $branch_list = $this->get_branch_list();
@@ -699,6 +716,8 @@ class locum_polaris_40 {
       $hold['pickuploc'] = $pickup_loc;
     
       return $hold;
+    } else {
+      return FALSE;
     }
   }
   
