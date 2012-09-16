@@ -637,16 +637,38 @@ class locum_polaris_40 {
     $orgID = $this->locum_config['polaris_api']['orgID'];
     $appID = $this->locum_config['polaris_api']['appID'];
     $langID = $this->locum_config['polaris_api']['langID'];
+    $payment_class = $this->locum_config['payment']['library'];
     
     $payment_amount = $paument_details['total'];
 
-    // Attempt credit card payment here
-    $payment_success = TRUE; // Assuming TRUE for testing purposes;
-    $payment_reject_reason = 'Credit card payment is not yet supported';
-    $payment_error = 'Credit card payment is not yet supported';
+    if ((float) $payment_details > 0) {
+
+      require_once('payment/' . $payment_class . '/' . $payment_class . '.php');
+      
+      $payment_class_name = 'locum_' . $payment_class;
+      $payment_handler = new $payment_class_name;
+      $transaction_result = $payment_handler->transaction($payment_details);
+      
+      if ($transaction_result['result_code'] == 1) {
+        $payment_success = TRUE;
+        $payment_reject_reason = NULL;
+        $payment_error = NULL;
+      } else {
+        $payment_success = FALSE;
+        $payment_reject_reason = $transaction_result['result_msg'];
+        $payment_error = $transaction_result['result_err'];
+      }
+      
+    } else {
+      $payment_success = FALSE;
+      $payment_reject_reason = NULL;
+      $payment_error = 'Payment amount is zero.';
+    }
     
     if ($payment_success) {
       $pay_result['approved'] = 1;
+      $pay_result['error'] = NULL;
+      $pay_result['reason'] = NULL;
       
       $patron_fines = $this->patron_fines($cardnum);
       $allfines = array();
@@ -660,7 +682,7 @@ class locum_polaris_40 {
           if (in_array($varname, $valid_tx_ids)) {
             $txnamt = $allfines[$varname];
             $polaris_uri = '/PAPIService/REST/public/v1/' . $langID . '/' . $appID . '/' . $orgID . '/patron/' . $cardnum . '/account/' . $varname . '/pay?wsid=1&userid=1';
-            $content = '<PatronAccountPayData><TxnAmount>' . $txnamt . '</TxnAmount><PaymentMethodID>12</PaymentMethodID><FreeTextNote>Transaction #' . $txnamt . ' paid through website</FreeTextNote></PatronAccountPayData>';
+            $content = '<PatronAccountPayData><TxnAmount>' . $txnamt . '</TxnAmount><PaymentMethodID>12</PaymentMethodID><FreeTextNote>' . $transaction_result['result_msg'] . '</FreeTextNote></PatronAccountPayData>';
             $payment_request_result[] = $this->simpleXMLToArray(simplexml_load_string($this->curl_put($polaris_uri, $content)));
           }
         }
@@ -668,7 +690,7 @@ class locum_polaris_40 {
       
     } else {
       $pay_result['approved'] = 0;
-      $pay_result['error'] = $payment_reject_reason;
+      $pay_result['error'] = $payment_error;
       $pay_result['reason'] = $payment_reject_reason;
     }
     
